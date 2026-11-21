@@ -1,0 +1,2 @@
+# Fuerza finales de línea LF (evita errores en Linux/Elastic Beanstalk al trabajar desde Windows)
+* text=auto eol=lf

@@ -1,0 +1,52 @@
+# ---------------------------------------------------------------
+# Integración continua (AWS CodeBuild)
+# 1) instala dependencias (con caché de npm)
+# 2) valida sintaxis y ejecuta las pruebas unitarias (informe JUnit)
+# 3) deja solo dependencias de producción y genera el artefacto
+# Si una prueba falla, el build falla y el pipeline NO despliega.
+# ---------------------------------------------------------------
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 22
+  pre_build:
+    commands:
+      - echo "Instalando dependencias..."
+      - npm ci
+      - npm run check
+  build:
+    commands:
+      - echo "Ejecutando pruebas unitarias..."
+      - npm test
+  post_build:
+    commands:
+      - echo "Dejando solo dependencias de producción..."
+      - npm prune --omit=dev
+      - >
+        node -e "require('fs').writeFileSync('build-info.json', JSON.stringify({
+        commit: process.env.CODEBUILD_RESOLVED_SOURCE_VERSION || 'desconocido',
+        buildId: process.env.CODEBUILD_BUILD_NUMBER || 'n/a',
+        fecha: new Date().toISOString() }))"
+      - cat build-info.json
+
+reports:
+  pruebas-unitarias-pedidos:
+    files:
+      - reports/junit.xml
+    file-format: JUNITXML
+
+artifacts:
+  files:
+    - src/**/*
+    - public/**/*
+    - node_modules/**/*
+    - package.json
+    - package-lock.json
+    - build-info.json
+    - .ebextensions/**/*
+
+cache:
+  paths:
+    - /root/.npm/**/*

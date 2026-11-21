@@ -1,0 +1,96 @@
+# ------------------------------------------------------------------
+# PLAN B — solo si el Learner Lab bloquea CodePipeline/CodeBuild.
+# Copia este archivo a .github/workflows/ci-cd.yml
+# Hace lo mismo que el pipeline de AWS: pruebas -> artefacto -> pruebas -> producción.
+#
+# Secretos del repo (Settings > Secrets and variables > Actions), copiados de
+# "AWS Details" del Learner Lab (vencen cada ~4 h; actualízalos al iniciar el lab):
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN
+# ------------------------------------------------------------------
+name: CI-CD plataforma de pedidos
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  AWS_REGION: us-east-1
+  APP: plataforma-pedidos
+
+jobs:
+  integracion:
+    name: Pruebas y empaquetado
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: informe-pruebas, path: reports/junit.xml }
+      - name: Empaquetar
+        if: github.event_name == 'push'
+        run: |
+          npm prune --omit=dev
+          echo "{\"commit\":\"$GITHUB_SHA\",\"buildId\":\"$GITHUB_RUN_NUMBER\",\"fecha\":\"$(date -u +%FT%TZ)\"}" > build-info.json
+          zip -qr app.zip src public node_modules package.json package-lock.json build-info.json .ebextensions
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push'
+        with: { name: app, path: app.zip }
+
+  desplegar-pruebas:
+    name: Desplegar en PRUEBAS
+    needs: integracion
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.etiqueta }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: app }
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - id: version
+        run: echo "etiqueta=v${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - name: Registrar versión en Elastic Beanstalk
+        run: |
+          BUCKET=$(aws elasticbeanstalk create-storage-location --query S3Bucket --output text)
+          aws s3 cp app.zip "s3://$BUCKET/$APP/${{ steps.version.outputs.etiqueta }}.zip"
+          aws elasticbeanstalk create-application-version --application-name "$APP" \
+            --version-label "${{ steps.version.outputs.etiqueta }}" \
+            --source-bundle S3Bucket="$BUCKET",S3Key="$APP/${{ steps.version.outputs.etiqueta }}.zip"
+      - name: Desplegar
+        run: |
+          aws elasticbeanstalk update-environment --environment-name "$APP-pruebas" --version-label "${{ steps.version.outputs.etiqueta }}"
+          aws elasticbeanstalk wait environment-updated --environment-names "$APP-pruebas"
+      - name: Pruebas de humo
+        run: |
+          URL=$(aws elasticbeanstalk describe-environments --environment-names "$APP-pruebas" --query "Environments[0].CNAME" --output text)
+          curl -fsS --retry 10 --retry-delay 6 --retry-all-errors "http://$URL/health"
+
+  desplegar-produccion:
+    name: Desplegar en PRODUCCIÓN
+    needs: desplegar-pruebas
+    runs-on: ubuntu-latest
+    environment: produccion   # en GitHub puedes exigir aprobación manual para este entorno
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - run: |
+          aws elasticbeanstalk update-environment --environment-name "$APP-produccion" --version-label "${{ needs.desplegar-pruebas.outputs.version }}"
+          aws elasticbeanstalk wait environment-updated --environment-names "$APP-produccion"
+          URL=$(aws elasticbeanstalk describe-environments --environment-names "$APP-produccion" --query "Environments[0].CNAME" --output text)
+          curl -fsS --retry 10 --retry-delay 6 --retry-all-errors "http://$URL/health"

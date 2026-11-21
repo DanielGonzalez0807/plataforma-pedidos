@@ -1,0 +1,21 @@
+# ---------------------------------------------------------------
+# Pruebas de humo (AWS CodeBuild) contra el entorno de PRUEBAS.
+# Corre después del despliegue a pruebas y antes de la aprobación
+# a producción. Si falla, la versión no llega a producción.
+# La variable URL_APP la define el pipeline.
+# ---------------------------------------------------------------
+version: 0.2
+
+phases:
+  build:
+    commands:
+      - echo "Probando $URL_APP ..."
+      - curl -fsS --retry 10 --retry-delay 6 --retry-all-errors "$URL_APP/health"
+      - >
+        ID=$(curl -fsS -X POST "$URL_APP/api/pedidos" -H "Content-Type: application/json"
+        -d '{"cliente":{"nombre":"Prueba de humo","email":"humo@pipeline.com"},"productos":[{"nombre":"Producto test","cantidad":1,"precioUnitario":1000}],"direccionEnvio":"Pipeline CI/CD"}'
+        | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).id))")
+      - echo "Pedido creado $ID"
+      - curl -fsS -X PATCH "$URL_APP/api/pedidos/$ID/estado" -H "Content-Type:application/json" -d '{"estado":"Cancelado"}'
+      - curl -fsS "$URL_APP/api/info"
+      - echo "Pruebas de humo OK"

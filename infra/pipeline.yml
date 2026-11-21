@@ -1,0 +1,158 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Actividad 6 - Pipeline CI/CD de la plataforma de pedidos.
+  Fuente (GitHub o CodeCommit) -> Construccion y pruebas (CodeBuild) -> Despliegue a PRUEBAS (Elastic Beanstalk)
+  -> Pruebas de humo (CodeBuild) -> Aprobacion manual -> Despliegue a PRODUCCION (Elastic Beanstalk).
+  Usa LabRole para CodePipeline y CodeBuild (AWS Academy Learner Lab no permite crear roles).
+
+Parameters:
+  NombreApp:
+    Type: String
+    Default: plataforma-pedidos
+  StackApp:
+    Type: String
+    Default: pedidos-app
+    Description: Nombre del stack creado con infra/app.yml (de ahí se leen los entornos)
+  ProveedorFuente:
+    Type: String
+    AllowedValues: [GitHub, CodeCommit]
+    Default: GitHub
+  ConexionGitHubArn:
+    Type: String
+    Default: ''
+    Description: ARN de la conexión a GitHub (Developer Tools > Settings > Connections). Solo si ProveedorFuente=GitHub
+  RepositorioGitHub:
+    Type: String
+    Default: ''
+    Description: 'usuario/repositorio. Ej: danielgonzalez/plataforma-pedidos'
+  RepositorioCodeCommit:
+    Type: String
+    Default: plataforma-pedidos
+  Rama:
+    Type: String
+    Default: main
+
+Conditions:
+  UsaGitHub: !Equals [!Ref ProveedorFuente, GitHub]
+
+Resources:
+  BucketArtefactos:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Sub '${NombreApp}-artefactos-${AWS::AccountId}'
+      VersioningConfiguration: { Status: Enabled }
+
+  # ---------- CI: compilar, probar y empaquetar ----------
+  ProyectoBuild:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${NombreApp}-build'
+      Description: Instala dependencias, ejecuta pruebas unitarias y genera el artefacto
+      ServiceRole: !Sub 'arn:aws:iam::${AWS::AccountId}:role/LabRole'
+      Source: { Type: CODEPIPELINE, BuildSpec: buildspec.yml }
+      Artifacts: { Type: CODEPIPELINE }
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux-x86_64-standard:5.0
+      Cache:
+        Type: S3
+        Location: !Sub '${BucketArtefactos}/cache-npm'
+      TimeoutInMinutes: 15
+      LogsConfig:
+        CloudWatchLogs: { Status: ENABLED, GroupName: !Sub '/codebuild/${NombreApp}' }
+
+  # ---------- CD: pruebas de humo contra el entorno de pruebas ----------
+  ProyectoHumo:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${NombreApp}-pruebas-humo'
+      Description: Verifica que el entorno de PRUEBAS responde antes de pasar a produccion
+      ServiceRole: !Sub 'arn:aws:iam::${AWS::AccountId}:role/LabRole'
+      Source: { Type: CODEPIPELINE, BuildSpec: buildspec-humo.yml }
+      Artifacts: { Type: CODEPIPELINE }
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux-x86_64-standard:5.0
+        EnvironmentVariables:
+          - Name: URL_APP
+            Value: { 'Fn::ImportValue': !Sub '${StackApp}-UrlPruebas' }
+      TimeoutInMinutes: 10
+      LogsConfig:
+        CloudWatchLogs: { Status: ENABLED, GroupName: !Sub '/codebuild/${NombreApp}' }
+
+  # ---------- Pipeline ----------
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub '${NombreApp}-pipeline'
+      RoleArn: !Sub 'arn:aws:iam::${AWS::AccountId}:role/LabRole'
+      ArtifactStore: { Type: S3, Location: !Ref BucketArtefactos }
+      Stages:
+        - Name: Fuente
+          Actions:
+            - !If
+              - UsaGitHub
+              - Name: GitHub
+                ActionTypeId: { Category: Source, Owner: AWS, Provider: CodeStarSourceConnection, Version: '1' }
+                Configuration:
+                  ConnectionArn: !Ref ConexionGitHubArn
+                  FullRepositoryId: !Ref RepositorioGitHub
+                  BranchName: !Ref Rama
+                  DetectChanges: true          # se dispara solo con cada commit/push
+                  OutputArtifactFormat: CODE_ZIP
+                OutputArtifacts: [{ Name: CodigoFuente }]
+              - Name: CodeCommit
+                ActionTypeId: { Category: Source, Owner: AWS, Provider: CodeCommit, Version: '1' }
+                Configuration:
+                  RepositoryName: !Ref RepositorioCodeCommit
+                  BranchName: !Ref Rama
+                  PollForSourceChanges: true   # revisa el repo y se dispara con cada commit
+                OutputArtifacts: [{ Name: CodigoFuente }]
+
+        - Name: Construccion
+          Actions:
+            - Name: Pruebas-y-Empaquetado
+              ActionTypeId: { Category: Build, Owner: AWS, Provider: CodeBuild, Version: '1' }
+              Configuration: { ProjectName: !Ref ProyectoBuild }
+              InputArtifacts: [{ Name: CodigoFuente }]
+              OutputArtifacts: [{ Name: AppConstruida }]
+
+        - Name: Desplegar-Pruebas
+          Actions:
+            - Name: Beanstalk-Pruebas
+              ActionTypeId: { Category: Deploy, Owner: AWS, Provider: ElasticBeanstalk, Version: '1' }
+              Configuration:
+                ApplicationName: { 'Fn::ImportValue': !Sub '${StackApp}-Aplicacion' }
+                EnvironmentName: { 'Fn::ImportValue': !Sub '${StackApp}-EntornoPruebas' }
+              InputArtifacts: [{ Name: AppConstruida }]
+              RunOrder: 1
+            - Name: Pruebas-de-Humo
+              ActionTypeId: { Category: Test, Owner: AWS, Provider: CodeBuild, Version: '1' }
+              Configuration: { ProjectName: !Ref ProyectoHumo }
+              InputArtifacts: [{ Name: CodigoFuente }]
+              RunOrder: 2
+
+        - Name: Aprobacion
+          Actions:
+            - Name: Aprobar-paso-a-Produccion
+              ActionTypeId: { Category: Approval, Owner: AWS, Provider: Manual, Version: '1' }
+              Configuration:
+                CustomData: Revisa el entorno de PRUEBAS y aprueba para publicar en PRODUCCION.
+
+        - Name: Desplegar-Produccion
+          Actions:
+            - Name: Beanstalk-Produccion
+              ActionTypeId: { Category: Deploy, Owner: AWS, Provider: ElasticBeanstalk, Version: '1' }
+              Configuration:
+                ApplicationName: { 'Fn::ImportValue': !Sub '${StackApp}-Aplicacion' }
+                EnvironmentName: { 'Fn::ImportValue': !Sub '${StackApp}-EntornoProduccion' }
+              InputArtifacts: [{ Name: AppConstruida }]
+
+Outputs:
+  Pipeline:
+    Value: !Ref Pipeline
+  ConsolaPipeline:
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/codesuite/codepipeline/pipelines/${Pipeline}/view'

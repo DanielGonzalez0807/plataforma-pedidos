@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Plataforma de Gestión de Pedidos</title>
+  <style>
+    :root { --azul:#1d4ed8; --fondo:#f1f5f9; --borde:#cbd5e1; --texto:#0f172a; --suave:#64748b; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, sans-serif; background:var(--fondo); color:var(--texto); }
+    header { background:var(--azul); color:#fff; padding:16px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
+    header h1 { margin:0; font-size:20px; }
+    header small { opacity:.85; font-family: ui-monospace, monospace; }
+    header a { color:#fff; }
+    main { max-width:1200px; margin:24px auto; padding:0 16px; display:grid; grid-template-columns: 360px 1fr; gap:24px; }
+    @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+    section { background:#fff; border:1px solid var(--borde); border-radius:12px; padding:20px; }
+    h2 { margin:0 0 12px; font-size:17px; }
+    label { display:block; font-size:13px; color:var(--suave); margin:10px 0 4px; }
+    input, select, textarea { width:100%; padding:8px; border:1px solid var(--borde); border-radius:8px; font:inherit; }
+    .fila { display:grid; grid-template-columns: 2fr 1fr 1fr auto; gap:6px; margin-bottom:6px; }
+    button { background:var(--azul); color:#fff; border:0; border-radius:8px; padding:9px 14px; cursor:pointer; font:inherit; }
+    button.sec { background:#e2e8f0; color:var(--texto); }
+    .filtros { display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; align-items:end; }
+    @media (max-width: 900px) { .filtros { grid-template-columns: 1fr 1fr; } }
+    table { width:100%; border-collapse:collapse; margin-top:16px; font-size:14px; }
+    th, td { text-align:left; padding:8px; border-bottom:1px solid #e2e8f0; vertical-align:top; }
+    th { color:var(--suave); font-weight:600; }
+    .estado { padding:2px 8px; border-radius:99px; font-size:12px; white-space:nowrap; }
+    .Pendiente{background:#fef9c3} .En-Proceso{background:#dbeafe} .Enviado{background:#ede9fe} .Entregado{background:#dcfce7} .Cancelado{background:#fee2e2}
+    #resumen { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+    #mensaje { margin-top:10px; font-size:14px; min-height:20px; }
+    .error { color:#b91c1c; } .ok { color:#15803d; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>📦 Plataforma de Gestión de Pedidos</h1>
+  <small id="info">cargando…</small>
+  <a href="/docs">Documentación API (Swagger)</a>
+</header>
+<main>
+  <section>
+    <h2>Nuevo pedido</h2>
+    <form id="form">
+      <label>Cliente</label><input name="nombre" required placeholder="Nombre completo">
+      <label>Email</label><input name="email" type="email" required placeholder="cliente@correo.com">
+      <label>Teléfono</label><input name="telefono" placeholder="3001234567">
+      <label>Productos (nombre · cantidad · precio)</label>
+      <div id="productos"></div>
+      <button type="button" class="sec" id="agregar">+ Producto</button>
+      <label>Dirección de envío</label><textarea name="direccion" rows="2" required></textarea>
+      <p><button type="submit">Crear pedido</button></p>
+      <div id="mensaje"></div>
+    </form>
+  </section>
+
+  <section>
+    <h2>Pedidos</h2>
+    <div id="resumen"></div>
+    <div class="filtros">
+      <div><label>Estado</label><select id="f-estado"><option value="">Todos</option></select></div>
+      <div><label>Cliente</label><input id="f-cliente" placeholder="nombre o email"></div>
+      <div><label>Desde</label><input id="f-desde" type="date"></div>
+      <div><label>Hasta</label><input id="f-hasta" type="date"></div>
+      <div><label>Ordenar por</label>
+        <select id="f-orden-por">
+          <option value="fechaCreacion">Fecha de creación</option>
+          <option value="fechaActualizacion">Última actualización</option>
+          <option value="estado">Estado</option>
+          <option value="total">Total</option>
+          <option value="cliente">Cliente</option>
+        </select></div>
+      <div><label>Orden</label><select id="f-orden"><option value="desc">Descendente</option><option value="asc">Ascendente</option></select></div>
+    </div>
+    <table>
+      <thead><tr><th>Fecha</th><th>Cliente</th><th>Productos</th><th>Total</th><th>Estado</th><th>Cambiar a</th></tr></thead>
+      <tbody id="tabla"><tr><td colspan="6">Cargando…</td></tr></tbody>
+    </table>
+  </section>
+</main>
+
+<script>
+const TRANSICIONES = { 'Pendiente':['En Proceso','Cancelado'], 'En Proceso':['Enviado','Cancelado'], 'Enviado':['Entregado'], 'Entregado':[], 'Cancelado':[] };
+const $ = id => document.getElementById(id);
+const pesos = n => new Intl.NumberFormat('es-CO', { style:'currency', currency:'COP', maximumFractionDigits:0 }).format(n);
+const esc = t => String(t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function filaProducto() {
+  const d = document.createElement('div'); d.className = 'fila';
+  d.innerHTML = '<input placeholder="Producto" required><input type="number" min="1" value="1" required><input type="number" min="0" step="any" placeholder="Precio" required><button type="button" class="sec">✕</button>';
+  d.querySelector('button').onclick = () => { if ($('productos').children.length > 1) d.remove(); };
+  $('productos').appendChild(d);
+}
+
+async function api(url, opciones) {
+  const r = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opciones });
+  const cuerpo = await r.json();
+  if (!r.ok) throw new Error([cuerpo.error, ...(cuerpo.detalles || [])].join(' · '));
+  return cuerpo;
+}
+
+async function cargar() {
+  const q = new URLSearchParams();
+  [['estado','f-estado'],['cliente','f-cliente'],['desde','f-desde'],['hasta','f-hasta'],['ordenarPor','f-orden-por'],['orden','f-orden']]
+    .forEach(([k, id]) => { if ($(id).value) q.set(k, $(id).value); });
+  try {
+    const [{ pedidos }, resumen] = await Promise.all([api('/api/pedidos?' + q), api('/api/pedidos/resumen')]);
+    $('resumen').innerHTML = Object.entries(resumen.porEstado).map(([e, n]) => `<span class="estado ${e.replace(' ', '-')}">${e}: ${n}</span>`).join('');
+    $('tabla').innerHTML = pedidos.length ? pedidos.map(p => `
+      <tr>
+        <td>${new Date(p.fechaCreacion).toLocaleString('es-CO')}</td>
+        <td>${esc(p.cliente.nombre)}<br><small>${esc(p.cliente.email)}</small></td>
+        <td>${p.productos.map(x => `${x.cantidad} × ${esc(x.nombre)}`).join('<br>')}</td>
+        <td>${pesos(p.total)}</td>
+        <td><span class="estado ${p.estado.replace(' ', '-')}">${p.estado}</span></td>
+        <td>${TRANSICIONES[p.estado].map(e => `<button class="sec" onclick="cambiar('${p.id}','${e}')">${e}</button>`).join(' ') || '—'}</td>
+      </tr>`).join('') : '<tr><td colspan="6">No hay pedidos con esos filtros</td></tr>';
+  } catch (e) { $('tabla').innerHTML = `<tr><td colspan="6" class="error">${esc(e.message)}</td></tr>`; }
+}
+
+async function cambiar(id, estado) {
+  try { await api(`/api/pedidos/${id}/estado`, { method:'PATCH', body: JSON.stringify({ estado }) }); cargar(); }
+  catch (e) { alert(e.message); }
+}
+
+$('form').onsubmit = async ev => {
+  ev.preventDefault();
+  const f = ev.target;
+  const productos = [...$('productos').children].map(d => {
+    const [n, c, p] = d.querySelectorAll('input');
+    return { nombre: n.value, cantidad: Number(c.value), precioUnitario: Number(p.value) };
+  });
+  try {
+    await api('/api/pedidos', { method:'POST', body: JSON.stringify({
+      cliente: { nombre: f.nombre.value, email: f.email.value, telefono: f.telefono.value },
+      productos, direccionEnvio: f.direccion.value }) });
+    $('mensaje').className = 'ok'; $('mensaje').textContent = 'Pedido creado ✔';
+    f.reset(); $('productos').innerHTML = ''; filaProducto(); cargar();
+  } catch (e) { $('mensaje').className = 'error'; $('mensaje').textContent = e.message; }
+};
+
+Object.keys(TRANSICIONES).forEach(e => $('f-estado').add(new Option(e, e)));
+['f-estado','f-cliente','f-desde','f-hasta','f-orden-por','f-orden'].forEach(id => $(id).addEventListener('input', cargar));
+$('agregar').onclick = filaProducto;
+filaProducto();
+api('/api/info').then(i => $('info').textContent = `v${i.version} · ${i.entorno} · commit ${String(i.commit).slice(0,7)}`);
+cargar();
+</script>
+</body>
+</html>

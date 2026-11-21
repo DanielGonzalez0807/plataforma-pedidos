@@ -1,0 +1,24 @@
+{
+  "name": "plataforma-pedidos",
+  "version": "1.0.0",
+  "description": "API REST de gestión de pedidos con CI/CD en AWS (CodePipeline, CodeBuild, Elastic Beanstalk, DynamoDB)",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "pretest": "node -e \"require('fs').mkdirSync('reports',{recursive:true})\"",
+    "test": "node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=reports/junit.xml \"test/*.test.js\"",
+    "check": "node --check src/server.js && node --check src/app.js"
+  },
+  "engines": { "node": ">=20" },
+  "author": "Daniel González Ortiz",
+  "license": "MIT",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.700.0",
+    "@aws-sdk/lib-dynamodb": "^3.700.0",
+    "express": "^5.1.0",
+    "swagger-ui-express": "^5.0.1"
+  },
+  "devDependencies": {
+    "supertest": "^7.1.0"
+  }
+}

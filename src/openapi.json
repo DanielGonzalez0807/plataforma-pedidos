@@ -1,0 +1,488 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "API de Gestión de Pedidos",
+    "version": "1.0.0",
+    "description": "Actividad 6 · Herramientas de Software II · Universidad de La Salle. Crear, consultar (con filtros y orden) y actualizar el estado de pedidos."
+  },
+  "tags": [
+    {
+      "name": "Pedidos"
+    },
+    {
+      "name": "Sistema"
+    }
+  ],
+  "paths": {
+    "/api/pedidos": {
+      "post": {
+        "tags": [
+          "Pedidos"
+        ],
+        "summary": "Crear un pedido",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NuevoPedido"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Pedido creado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pedido"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Datos inválidos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Pedidos"
+        ],
+        "summary": "Listar pedidos con filtros y orden",
+        "parameters": [
+          {
+            "name": "estado",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "Pendiente",
+                "En Proceso",
+                "Enviado",
+                "Entregado",
+                "Cancelado"
+              ]
+            }
+          },
+          {
+            "name": "cliente",
+            "in": "query",
+            "description": "Texto parcial del nombre o email",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "desde",
+            "in": "query",
+            "description": "Fecha de creación mínima (AAAA-MM-DD)",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "hasta",
+            "in": "query",
+            "description": "Fecha de creación máxima (AAAA-MM-DD)",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "ordenarPor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "fechaCreacion",
+                "fechaActualizacion",
+                "estado",
+                "total",
+                "cliente"
+              ],
+              "default": "fechaCreacion"
+            }
+          },
+          {
+            "name": "orden",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "default": "desc"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista de pedidos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "total": {
+                      "type": "integer"
+                    },
+                    "pedidos": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Pedido"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Filtro inválido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pedidos/resumen": {
+      "get": {
+        "tags": [
+          "Pedidos"
+        ],
+        "summary": "Cantidad de pedidos por estado",
+        "responses": {
+          "200": {
+            "description": "Resumen"
+          }
+        }
+      }
+    },
+    "/api/pedidos/{id}": {
+      "get": {
+        "tags": [
+          "Pedidos"
+        ],
+        "summary": "Consultar un pedido",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pedido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pedido"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No existe",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pedidos/{id}/estado": {
+      "patch": {
+        "tags": [
+          "Pedidos"
+        ],
+        "summary": "Actualizar el estado de un pedido",
+        "description": "Flujo: Pendiente → En Proceso → Enviado → Entregado. Se puede Cancelar mientras esté Pendiente o En Proceso.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "estado"
+                ],
+                "properties": {
+                  "estado": {
+                    "type": "string",
+                    "enum": [
+                      "Pendiente",
+                      "En Proceso",
+                      "Enviado",
+                      "Entregado",
+                      "Cancelado"
+                    ]
+                  }
+                }
+              },
+              "example": {
+                "estado": "En Proceso"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Estado actualizado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pedido"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Estado inválido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No existe",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Transición no permitida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "Sistema"
+        ],
+        "summary": "Chequeo de salud (lo usa Elastic Beanstalk)",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/info": {
+      "get": {
+        "tags": [
+          "Sistema"
+        ],
+        "summary": "Versión, entorno y commit desplegado",
+        "responses": {
+          "200": {
+            "description": "Info"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Producto": {
+        "type": "object",
+        "required": [
+          "nombre",
+          "cantidad",
+          "precioUnitario"
+        ],
+        "properties": {
+          "nombre": {
+            "type": "string"
+          },
+          "cantidad": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "precioUnitario": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      },
+      "NuevoPedido": {
+        "type": "object",
+        "required": [
+          "cliente",
+          "productos",
+          "direccionEnvio"
+        ],
+        "properties": {
+          "cliente": {
+            "type": "object",
+            "required": [
+              "nombre",
+              "email"
+            ],
+            "properties": {
+              "nombre": {
+                "type": "string"
+              },
+              "email": {
+                "type": "string",
+                "format": "email"
+              },
+              "telefono": {
+                "type": "string"
+              }
+            }
+          },
+          "productos": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/Producto"
+            }
+          },
+          "direccionEnvio": {
+            "type": "string"
+          }
+        },
+        "example": {
+          "cliente": {
+            "nombre": "Laura Martínez",
+            "email": "laura@correo.com",
+            "telefono": "3001234567"
+          },
+          "productos": [
+            {
+              "nombre": "Teclado mecánico",
+              "cantidad": 1,
+              "precioUnitario": 180000
+            },
+            {
+              "nombre": "Mouse inalámbrico",
+              "cantidad": 2,
+              "precioUnitario": 65000
+            }
+          ],
+          "direccionEnvio": "Calle 72 # 10-34, Bogotá"
+        }
+      },
+      "Pedido": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "cliente": {
+            "type": "object"
+          },
+          "productos": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "total": {
+            "type": "number"
+          },
+          "direccionEnvio": {
+            "type": "string"
+          },
+          "estado": {
+            "type": "string",
+            "enum": [
+              "Pendiente",
+              "En Proceso",
+              "Enviado",
+              "Entregado",
+              "Cancelado"
+            ]
+          },
+          "historialEstados": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "estado": {
+                  "type": "string"
+                },
+                "fecha": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          },
+          "fechaCreacion": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "fechaActualizacion": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "detalles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

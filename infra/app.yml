@@ -1,0 +1,129 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Actividad 6 - Infraestructura de la plataforma de pedidos (IaC).
+  Tablas DynamoDB y aplicación de Elastic Beanstalk con dos entornos: pruebas y producción.
+  Adaptada a AWS Academy Learner Lab (usa LabRole y LabInstanceProfile, no crea roles).
+
+Parameters:
+  NombreApp:
+    Type: String
+    Default: plataforma-pedidos
+  SolutionStack:
+    Type: String
+    Description: 'Plataforma de Elastic Beanstalk. Ej: "64bit Amazon Linux 2023 v6.x.x running Node.js 22" (el script crear-infra.sh la busca sola)'
+  TipoInstancia:
+    Type: String
+    Default: t3.micro
+    AllowedValues: [t3.micro, t3.small, t2.micro]
+
+Resources:
+  # ---------- Base de datos (una tabla por entorno) ----------
+  TablaPruebas:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${NombreApp}-pruebas'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: [{ AttributeName: id, AttributeType: S }]
+      KeySchema: [{ AttributeName: id, KeyType: HASH }]
+
+  TablaProduccion:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${NombreApp}-produccion'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: [{ AttributeName: id, AttributeType: S }]
+      KeySchema: [{ AttributeName: id, KeyType: HASH }]
+
+  # ---------- Elastic Beanstalk ----------
+  Aplicacion:
+    Type: AWS::ElasticBeanstalk::Application
+    Properties:
+      ApplicationName: !Ref NombreApp
+      Description: API REST de gestión de pedidos
+
+  # Configuración común a los dos entornos
+  PlantillaConfig:
+    Type: AWS::ElasticBeanstalk::ConfigurationTemplate
+    Properties:
+      ApplicationName: !Ref Aplicacion
+      SolutionStackName: !Ref SolutionStack
+      OptionSettings:
+        - Namespace: aws:elasticbeanstalk:environment
+          OptionName: EnvironmentType
+          Value: SingleInstance
+        - Namespace: aws:elasticbeanstalk:environment
+          OptionName: ServiceRole
+          Value: !Sub 'arn:aws:iam::${AWS::AccountId}:role/LabRole'
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: IamInstanceProfile
+          Value: LabInstanceProfile
+        - Namespace: aws:ec2:instances
+          OptionName: InstanceTypes
+          Value: !Ref TipoInstancia
+        # Salud mejorada
+        - Namespace: aws:elasticbeanstalk:healthreporting:system
+          OptionName: SystemType
+          Value: enhanced
+        # Monitoreo: envía los logs de la app a Amazon CloudWatch Logs
+        - Namespace: aws:elasticbeanstalk:cloudwatch:logs
+          OptionName: StreamLogs
+          Value: 'true'
+        - Namespace: aws:elasticbeanstalk:cloudwatch:logs
+          OptionName: RetentionInDays
+          Value: '7'
+        - Namespace: aws:elasticbeanstalk:cloudwatch:logs
+          OptionName: DeleteOnTerminate
+          Value: 'true'
+        - Namespace: aws:elasticbeanstalk:cloudwatch:logs:health
+          OptionName: HealthStreamingEnabled
+          Value: 'true'
+        # Despliegue de todas las instancias a la vez (1 sola instancia)
+        - Namespace: aws:elasticbeanstalk:command
+          OptionName: DeploymentPolicy
+          Value: AllAtOnce
+
+  EntornoPruebas:
+    Type: AWS::ElasticBeanstalk::Environment
+    Properties:
+      ApplicationName: !Ref Aplicacion
+      EnvironmentName: !Sub '${NombreApp}-pruebas'
+      TemplateName: !Ref PlantillaConfig
+      Tier: { Name: WebServer, Type: Standard }
+      OptionSettings:
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: TABLE_NAME
+          Value: !Ref TablaPruebas
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: ENTORNO
+          Value: pruebas
+
+  EntornoProduccion:
+    Type: AWS::ElasticBeanstalk::Environment
+    Properties:
+      ApplicationName: !Ref Aplicacion
+      EnvironmentName: !Sub '${NombreApp}-produccion'
+      TemplateName: !Ref PlantillaConfig
+      Tier: { Name: WebServer, Type: Standard }
+      OptionSettings:
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: TABLE_NAME
+          Value: !Ref TablaProduccion
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: ENTORNO
+          Value: produccion
+
+Outputs:
+  AplicacionBeanstalk:
+    Value: !Ref Aplicacion
+    Export: { Name: !Sub '${AWS::StackName}-Aplicacion' }
+  NombreEntornoPruebas:
+    Value: !Ref EntornoPruebas
+    Export: { Name: !Sub '${AWS::StackName}-EntornoPruebas' }
+  NombreEntornoProduccion:
+    Value: !Ref EntornoProduccion
+    Export: { Name: !Sub '${AWS::StackName}-EntornoProduccion' }
+  UrlPruebas:
+    Value: !Sub 'http://${EntornoPruebas.EndpointURL}'
+    Export: { Name: !Sub '${AWS::StackName}-UrlPruebas' }
+  UrlProduccion:
+    Value: !Sub 'http://${EntornoProduccion.EndpointURL}'
