@@ -1,6 +1,6 @@
 {
   "name": "plataforma-pedidos",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "API REST de gestión de pedidos con CI/CD en AWS (CodePipeline, CodeBuild, Elastic Beanstalk, DynamoDB)",
   "main": "src/server.js",
   "scripts": {
